@@ -10,20 +10,21 @@
 // 4) Added C++20 concepts
 // 5) Removed turn alignment
 // 6) Added std::memory_order_relaxed for atomic fetch_add
+// 7) Completed size() function for wrap around case
 
 #ifndef DRO_MPMC_QUEUE
 #define DRO_MPMC_QUEUE
 
-#include <atomic>
-#include <concepts>
-#include <cstddef>
-#include <cstdint>
-#include <cstdlib>
-#include <limits>
-#include <new>// for std::hardware_destructive_interference_size
-#include <stdexcept>
+#include <atomic>        // for atomic, memory_order
+#include <bits/std_abs.h>// for abs
+#include <concepts>      // for concept, requires
+#include <cstddef>       // for size_t, ptrdiff_t
+#include <limits>        // for numeric_limits
+#include <memory>        // for allocator
+#include <new>           // for std::hardware_destructive_interference_size
+#include <stdexcept>     // for logic_error
 #include <type_traits>
-#include <utility>
+#include <utility>// for forward
 
 namespace dro
 {
@@ -121,6 +122,8 @@ private:
   Slot<T>* buffer_;
   static constexpr std::size_t MAX_SIZE_T =
       std::numeric_limits<std::size_t>::max();
+  static constexpr std::ptrdiff_t MAX_PTRDIFF_T =
+      std::numeric_limits<std::ptrdiff_t>::max();
 
   alignas(cacheLineSize) std::atomic<std::size_t> tail_ {0};
   alignas(cacheLineSize) std::atomic<std::size_t> head_ {0};
@@ -261,22 +264,25 @@ public:
     }
   }
 
+  // This is an approximate size, and assumes the head and tail are less than
+  // 1/4 of std::size_t apart
   [[nodiscard]] std::ptrdiff_t size() const noexcept
   {
-    // This is an approximate size
-    auto tail = tail_.load(std::memory_order_acquire);
-    auto head = head_.load(std::memory_order_acquire);
-    auto maxToTail = MAX_SIZE_T - tail;
     // This needs to be a signed type, and causes a narrowing of size_t
+    auto tail = tail_.load(std::memory_order_acquire) % MAX_PTRDIFF_T;
+    auto head = head_.load(std::memory_order_acquire) % MAX_PTRDIFF_T;
     std::ptrdiff_t headToTail = head - tail;
+    if (std::abs(headToTail) < MAX_PTRDIFF_T / 2)
+    {
+      return headToTail;
+    }
+    auto maxToTail = MAX_PTRDIFF_T - tail;
+    auto maxToHead = MAX_PTRDIFF_T - head;
     // Handles wrap around case
-    return (maxToTail < std::abs(headToTail)) ? maxToTail + head : headToTail;
+    return (maxToTail < maxToHead) ? maxToTail + head : -(maxToHead + tail);
   }
 
-  [[nodiscard]] bool empty() const noexcept
-  {
-    return size() <= 0;
-  }
+  [[nodiscard]] bool empty() const noexcept { return size() <= 0; }
 
   [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
 };
