@@ -23,8 +23,8 @@
 #include <memory>        // for allocator
 #include <new>           // for std::hardware_destructive_interference_size
 #include <stdexcept>     // for logic_error
-#include <type_traits>
-#include <utility>// for forward
+#include <type_traits>   // for std::is_default_constructible
+#include <utility>       // for forward
 
 namespace dro
 {
